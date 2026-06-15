@@ -44,40 +44,68 @@ class MetricsCalculator:
         }
 
     def get_growth_rate(self, period: str = 'month') -> dict:
-        grouped = self._group_by_period(period)
-        if len(grouped) < 2:
-            return self._empty_growth_result("增长率")
+        sums, counts = self._group_by_period(period)
 
-        current = float(grouped.iloc[-1])
-        previous = float(grouped.iloc[-2])
-        rate = self._calc_percent_change(current, previous)
+        current_val, current_period = self._get_last_valid_period(sums, counts)
+        if current_val is None:
+            return self._empty_growth_result("增长率", "当前周期无有效数据")
+
+        prev_idx = sums.index.get_loc(current_period) - 1
+        if prev_idx < 0:
+            return self._empty_growth_result("增长率", "无上一周期数据")
+
+        prev_period = sums.index[prev_idx]
+        prev_count = int(counts.loc[prev_period])
+        if prev_count == 0:
+            return self._empty_growth_result(
+                "增长率",
+                f"上一{self._period_name(period)}（{prev_period.strftime('%Y-%m')}）无原始数据覆盖，无法计算环比"
+            )
+
+        previous = float(sums.loc[prev_period])
+        rate = self._calc_percent_change(current_val, previous)
 
         return {
             "name": "增长率",
             "value": round(rate, 2),
             "unit": "%",
             "description": f"较上一{self._period_name(period)}的环比增长率",
-            "current_value": round(current, 2),
+            "current_value": round(current_val, 2),
             "previous_value": round(previous, 2)
         }
 
     def get_yoy_growth(self, period: str = 'month') -> dict:
-        grouped = self._group_by_period(period)
-        periods = len(grouped)
+        sums, counts = self._group_by_period(period)
 
-        if periods <= 12:
-            return self._empty_growth_result("同比增长率")
+        current_val, current_period = self._get_last_valid_period(sums, counts)
+        if current_val is None:
+            return self._empty_growth_result("同比增长率", "当前周期无有效数据")
 
-        current = float(grouped.iloc[-1])
-        last_year = float(grouped.iloc[-13])
-        rate = self._calc_percent_change(current, last_year)
+        year_offset = relativedelta(years=1)
+        last_year_period = current_period - year_offset
+
+        if last_year_period not in sums.index:
+            return self._empty_growth_result(
+                "同比增长率",
+                f"去年同期（{last_year_period.strftime('%Y-%m')}）数据缺失，无法计算同比"
+            )
+
+        last_year_count = int(counts.loc[last_year_period])
+        if last_year_count == 0:
+            return self._empty_growth_result(
+                "同比增长率",
+                f"去年同期（{last_year_period.strftime('%Y-%m')}）无原始数据覆盖，无法计算同比"
+            )
+
+        last_year = float(sums.loc[last_year_period])
+        rate = self._calc_percent_change(current_val, last_year)
 
         return {
             "name": "同比增长率",
             "value": round(rate, 2),
             "unit": "%",
             "description": f"较去年同{self._period_name(period)}的同比增长率",
-            "current_value": round(current, 2),
+            "current_value": round(current_val, 2),
             "last_year_value": round(last_year, 2)
         }
 
@@ -118,14 +146,18 @@ class MetricsCalculator:
         }
 
     def get_trend_data(self, period: str = 'month', limit: int = 12) -> dict:
-        grouped = self._group_by_period(period)
-        recent = grouped.tail(limit)
+        sums, counts = self._group_by_period(period)
+        recent_sums = sums.tail(limit)
+        recent_counts = counts.tail(limit)
 
         trend = []
-        for i, (date_val, val) in enumerate(recent.items()):
+        for date_val in recent_sums.index:
+            val = float(recent_sums.loc[date_val])
+            cnt = int(recent_counts.loc[date_val])
             trend.append({
                 "period": str(date_val),
-                "value": round(float(val), 2)
+                "value": round(val, 2),
+                "has_data": cnt > 0
             })
 
         return {
@@ -141,7 +173,7 @@ class MetricsCalculator:
             filtered = filtered[filtered[self.date_col] <= pd.to_datetime(end_date)]
         return filtered
 
-    def _group_by_period(self, period: str) -> pd.Series:
+    def _group_by_period(self, period: str) -> tuple[pd.Series, pd.Series]:
         freq_map = {
             'day': 'D',
             'week': 'W-MON',
@@ -150,7 +182,10 @@ class MetricsCalculator:
             'year': 'YE'
         }
         freq = freq_map.get(period, 'ME')
-        return self.df.set_index(self.date_col)[self.value_col].resample(freq).sum()
+        grouped = self.df.set_index(self.date_col)[self.value_col].resample(freq)
+        sums = grouped.sum()
+        counts = grouped.count()
+        return sums, counts
 
     @staticmethod
     def _calc_percent_change(current: float, previous: float) -> float:
@@ -170,10 +205,17 @@ class MetricsCalculator:
         return names.get(period, '周期')
 
     @staticmethod
-    def _empty_growth_result(name: str) -> dict:
+    def _empty_growth_result(name: str, reason: str = "数据不足，无法计算增长率") -> dict:
         return {
             "name": name,
             "value": None,
             "unit": "%",
-            "description": "数据不足，无法计算增长率"
+            "description": reason
         }
+
+    @staticmethod
+    def _get_last_valid_period(sums: pd.Series, counts: pd.Series) -> tuple:
+        for i in range(len(sums) - 1, -1, -1):
+            if int(counts.iloc[i]) > 0:
+                return float(sums.iloc[i]), sums.index[i]
+        return None, None
