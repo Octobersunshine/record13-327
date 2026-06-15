@@ -165,6 +165,128 @@ class MetricsCalculator:
             "trend": trend
         }
 
+    def get_comparison(self, metric_type: str = 'total', period: str = 'month') -> dict:
+        sums, counts = self._group_by_period(period)
+
+        current_val, current_period = self._get_last_valid_period(sums, counts)
+        if current_val is None:
+            return self._empty_comparison_result(metric_type, period, "当前周期无有效数据")
+
+        prev_idx = sums.index.get_loc(current_period) - 1
+        if prev_idx < 0:
+            return self._empty_comparison_result(metric_type, period, "无上一周期数据")
+
+        prev_period = sums.index[prev_idx]
+        prev_count = int(counts.loc[prev_period])
+        if prev_count == 0:
+            return self._empty_comparison_result(
+                metric_type, period,
+                f"上一{self._period_name(period)}无原始数据覆盖"
+            )
+
+        previous_val = float(sums.loc[prev_period])
+
+        if metric_type == 'total':
+            current_metric_val = current_val
+            previous_metric_val = previous_val
+            name = "总数对比"
+            unit = ""
+        elif metric_type == 'average':
+            current_count = int(counts.loc[current_period])
+            prev_count_val = int(counts.loc[prev_period])
+            current_metric_val = current_val / current_count if current_count > 0 else 0
+            previous_metric_val = previous_val / prev_count_val if prev_count_val > 0 else 0
+            name = "均值对比"
+            unit = ""
+        else:
+            raise ValueError(f"不支持的对比类型: {metric_type}")
+
+        return self._build_comparison_result(
+            name=name,
+            metric_type=metric_type,
+            period=period,
+            current_period=current_period,
+            previous_period=prev_period,
+            current_value=current_metric_val,
+            previous_value=previous_metric_val,
+            unit=unit
+        )
+
+    def get_period_comparison(self, period: str = 'month') -> dict:
+        sums, counts = self._group_by_period(period)
+
+        current_val, current_period = self._get_last_valid_period(sums, counts)
+        if current_val is None:
+            return self._empty_comparison_result('period_sum', period, "当前周期无有效数据")
+
+        prev_idx = sums.index.get_loc(current_period) - 1
+        if prev_idx < 0:
+            return self._empty_comparison_result('period_sum', period, "无上一周期数据")
+
+        prev_period = sums.index[prev_idx]
+        prev_count = int(counts.loc[prev_period])
+        if prev_count == 0:
+            return self._empty_comparison_result(
+                'period_sum', period,
+                f"上一{self._period_name(period)}无原始数据覆盖"
+            )
+
+        previous_val = float(sums.loc[prev_period])
+        current_count = int(counts.loc[current_period])
+        prev_count_val = int(counts.loc[prev_period])
+
+        total_comparison = self._build_comparison_result(
+            name="周期总数对比",
+            metric_type="total",
+            period=period,
+            current_period=current_period,
+            previous_period=prev_period,
+            current_value=current_val,
+            previous_value=previous_val,
+            unit=""
+        )
+
+        avg_current = current_val / current_count if current_count > 0 else 0
+        avg_previous = previous_val / prev_count_val if prev_count_val > 0 else 0
+
+        avg_comparison = self._build_comparison_result(
+            name="周期均值对比",
+            metric_type="average",
+            period=period,
+            current_period=current_period,
+            previous_period=prev_period,
+            current_value=avg_current,
+            previous_value=avg_previous,
+            unit=""
+        )
+
+        return {
+            "status": "success",
+            "period": self._period_name(period),
+            "current_period_label": self._format_period_label(current_period, period),
+            "previous_period_label": self._format_period_label(prev_period, period),
+            "comparisons": {
+                "total": total_comparison,
+                "average": avg_comparison
+            },
+            "details": {
+                "current_count": current_count,
+                "previous_count": prev_count_val
+            }
+        }
+
+    def get_all_comparisons(self, period: str = 'month') -> dict:
+        return {
+            "status": "success",
+            "timestamp": datetime.now().isoformat(),
+            "period": self._period_name(period),
+            "comparisons": {
+                "total": self.get_comparison('total', period),
+                "average": self.get_comparison('average', period),
+                "period": self.get_period_comparison(period)
+            }
+        }
+
     def _filter_by_date(self, start_date, end_date):
         filtered = self.df
         if start_date:
@@ -219,3 +341,88 @@ class MetricsCalculator:
             if int(counts.iloc[i]) > 0:
                 return float(sums.iloc[i]), sums.index[i]
         return None, None
+
+    @staticmethod
+    def _build_comparison_result(name, metric_type, period, current_period, previous_period,
+                                 current_value, previous_value, unit="") -> dict:
+        change = current_value - previous_value
+        if previous_value == 0:
+            change_rate = 0.0 if current_value == 0 else float('inf')
+        else:
+            change_rate = (change / abs(previous_value)) * 100
+
+        direction = "flat"
+        arrow = "→"
+        if change > 0:
+            direction = "up"
+            arrow = "↑"
+        elif change < 0:
+            direction = "down"
+            arrow = "↓"
+
+        change_abs = abs(round(change, 2))
+        if direction == "up":
+            description = f"较上一{MetricsCalculator._period_name(period)}增加 {change_abs}{unit}，增长 {round(change_rate, 2)}%"
+        elif direction == "down":
+            description = f"较上一{MetricsCalculator._period_name(period)}减少 {change_abs}{unit}，下降 {round(abs(change_rate), 2)}%"
+        else:
+            description = f"较上一{MetricsCalculator._period_name(period)}持平"
+
+        return {
+            "name": name,
+            "metric_type": metric_type,
+            "status": "success",
+            "period": MetricsCalculator._period_name(period),
+            "current": {
+                "value": round(current_value, 2),
+                "period_label": MetricsCalculator._format_period_label(current_period, period),
+                "period_date": str(current_period)
+            },
+            "previous": {
+                "value": round(previous_value, 2),
+                "period_label": MetricsCalculator._format_period_label(previous_period, period),
+                "period_date": str(previous_period)
+            },
+            "change": {
+                "absolute": round(change, 2),
+                "percent": round(change_rate, 2),
+                "direction": direction,
+                "arrow": arrow,
+                "unit": unit
+            },
+            "description": description
+        }
+
+    @staticmethod
+    def _empty_comparison_result(metric_type: str, period: str, reason: str) -> dict:
+        type_names = {
+            'total': '总数对比',
+            'average': '均值对比',
+            'period_sum': '周期对比'
+        }
+        name = type_names.get(metric_type, '指标对比')
+        return {
+            "name": name,
+            "metric_type": metric_type,
+            "status": "empty",
+            "period": MetricsCalculator._period_name(period),
+            "current": {"value": None, "period_label": None, "period_date": None},
+            "previous": {"value": None, "period_label": None, "period_date": None},
+            "change": {"absolute": None, "percent": None, "direction": None, "arrow": None, "unit": ""},
+            "description": reason
+        }
+
+    @staticmethod
+    def _format_period_label(period_date, period: str) -> str:
+        if period == 'day':
+            return period_date.strftime('%Y年%m月%d日')
+        elif period == 'week':
+            return period_date.strftime('%Y年第%W周')
+        elif period == 'month':
+            return period_date.strftime('%Y年%m月')
+        elif period == 'quarter':
+            quarter = (period_date.month - 1) // 3 + 1
+            return f"{period_date.year}年Q{quarter}"
+        elif period == 'year':
+            return period_date.strftime('%Y年')
+        return str(period_date)

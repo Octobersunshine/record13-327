@@ -260,6 +260,62 @@ def get_dashboard():
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
+@app.route('/api/comparison/all', methods=['GET'])
+def get_all_comparisons():
+    try:
+        dataset_name = request.args.get('dataset', 'default')
+        period = request.args.get('period', 'month')
+        date_col = request.args.get('date_col', 'date')
+        value_col = request.args.get('value_col', 'value')
+
+        df = load_dataset(dataset_name)
+        calc = MetricsCalculator(df, date_col=date_col, value_col=value_col)
+        result = calc.get_all_comparisons(period=period)
+        return jsonify(result)
+    except FileNotFoundError as e:
+        return jsonify({"status": "error", "message": str(e)}), 404
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route('/api/comparison/<metric_type>', methods=['GET'])
+def get_comparison(metric_type):
+    try:
+        dataset_name = request.args.get('dataset', 'default')
+        period = request.args.get('period', 'month')
+        date_col = request.args.get('date_col', 'date')
+        value_col = request.args.get('value_col', 'value')
+
+        df = load_dataset(dataset_name)
+        calc = MetricsCalculator(df, date_col=date_col, value_col=value_col)
+        result = calc.get_comparison(metric_type=metric_type, period=period)
+        return jsonify({"status": "success", "comparison": result})
+    except FileNotFoundError as e:
+        return jsonify({"status": "error", "message": str(e)}), 404
+    except ValueError as e:
+        return jsonify({"status": "error", "message": str(e)}), 400
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route('/api/comparison/period', methods=['GET'])
+def get_period_comparison():
+    try:
+        dataset_name = request.args.get('dataset', 'default')
+        period = request.args.get('period', 'month')
+        date_col = request.args.get('date_col', 'date')
+        value_col = request.args.get('value_col', 'value')
+
+        df = load_dataset(dataset_name)
+        calc = MetricsCalculator(df, date_col=date_col, value_col=value_col)
+        result = calc.get_period_comparison(period=period)
+        return jsonify(result)
+    except FileNotFoundError as e:
+        return jsonify({"status": "error", "message": str(e)}), 404
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
 def init_sample_data():
     sample_file = os.path.join(DATA_DIR, 'default.csv')
     if not os.path.exists(sample_file):
@@ -282,5 +338,9 @@ if __name__ == '__main__':
     print("  GET  /api/metrics/growth-rate     获取增长率(环比)")
     print("  GET  /api/metrics/yoy-growth      获取同比增长率")
     print("  GET  /api/trend                   获取趋势数据")
+    print("  GET  /api/comparison/all          获取全部对比指标")
+    print("  GET  /api/comparison/total        总数对比(本期vs上期)")
+    print("  GET  /api/comparison/average      均值对比(本期vs上期)")
+    print("  GET  /api/comparison/period       周期综合对比")
     print("=" * 60)
     app.run(host='0.0.0.0', port=5000, debug=True)

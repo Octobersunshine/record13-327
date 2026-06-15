@@ -244,6 +244,162 @@ def test_trend_has_data_flag():
     print("✓ 趋势 has_data 标记测试通过\n")
 
 
+def test_comparison_total():
+    print("=" * 60)
+    print("测试12: 指标对比 - 总数对比")
+    print("=" * 60)
+
+    df = generate_sample_sales(days=730)
+    calc = MetricsCalculator(df)
+
+    comp = calc.get_comparison('total', period='month')
+    print(f"名称: {comp['name']}")
+    print(f"状态: {comp['status']}")
+    print(f"本期: {comp['current']['value']} ({comp['current']['period_label']})")
+    print(f"上期: {comp['previous']['value']} ({comp['previous']['period_label']})")
+    print(f"变化量: {comp['change']['absolute']}")
+    print(f"变化率: {comp['change']['percent']}%")
+    print(f"趋势方向: {comp['change']['direction']}")
+    print(f"趋势箭头: {comp['change']['arrow']}")
+    print(f"描述: {comp['description']}")
+
+    assert comp['status'] == 'success'
+    assert comp['change']['direction'] in ['up', 'down', 'flat']
+    assert comp['change']['arrow'] in ['↑', '↓', '→']
+    assert comp['current']['value'] is not None
+    assert comp['previous']['value'] is not None
+    assert comp['change']['absolute'] is not None
+
+    expected_change = comp['current']['value'] - comp['previous']['value']
+    assert abs(comp['change']['absolute'] - round(expected_change, 2)) < 0.01, "变化量计算错误"
+    print("✓ 总数对比测试通过\n")
+
+
+def test_comparison_average():
+    print("=" * 60)
+    print("测试13: 指标对比 - 均值对比")
+    print("=" * 60)
+
+    df = generate_sample_sales(days=730)
+    calc = MetricsCalculator(df)
+
+    comp = calc.get_comparison('average', period='month')
+    print(f"名称: {comp['name']}")
+    print(f"本期均值: {comp['current']['value']} ({comp['current']['period_label']})")
+    print(f"上期均值: {comp['previous']['value']} ({comp['previous']['period_label']})")
+    print(f"变化率: {comp['change']['percent']}%")
+    print(f"趋势: {comp['change']['arrow']} {comp['change']['direction']}")
+
+    assert comp['status'] == 'success'
+    assert comp['metric_type'] == 'average'
+    assert comp['current']['value'] > 0
+    assert comp['previous']['value'] > 0
+    print("✓ 均值对比测试通过\n")
+
+
+def test_comparison_directions():
+    print("=" * 60)
+    print("测试14: 指标对比 - 趋势方向验证(上升/下降/持平)")
+    print("=" * 60)
+
+    dates_up = pd.date_range(start='2025-01-01', end='2025-02-28', freq='D')
+    values_up = [100.0] * 31 + [150.0] * 28
+    df_up = pd.DataFrame({'date': dates_up.strftime('%Y-%m-%d'), 'value': values_up})
+    calc_up = MetricsCalculator(df_up)
+    comp_up = calc_up.get_comparison('total', period='month')
+    print(f"上升场景: {comp_up['change']['direction']} {comp_up['change']['arrow']} ({comp_up['change']['percent']}%)")
+    assert comp_up['change']['direction'] == 'up', "上升场景方向应为 up"
+    assert comp_up['change']['arrow'] == '↑', "上升场景箭头应为 ↑"
+
+    dates_down = pd.date_range(start='2025-01-01', end='2025-02-28', freq='D')
+    values_down = [200.0] * 31 + [100.0] * 28
+    df_down = pd.DataFrame({'date': dates_down.strftime('%Y-%m-%d'), 'value': values_down})
+    calc_down = MetricsCalculator(df_down)
+    comp_down = calc_down.get_comparison('total', period='month')
+    print(f"下降场景: {comp_down['change']['direction']} {comp_down['change']['arrow']} ({comp_down['change']['percent']}%)")
+    assert comp_down['change']['direction'] == 'down', "下降场景方向应为 down"
+    assert comp_down['change']['arrow'] == '↓', "下降场景箭头应为 ↓"
+
+    print("✓ 趋势方向验证测试通过\n")
+
+
+def test_period_comparison():
+    print("=" * 60)
+    print("测试15: 周期综合对比")
+    print("=" * 60)
+
+    df = generate_sample_sales(days=730)
+    calc = MetricsCalculator(df)
+
+    period_comp = calc.get_period_comparison(period='month')
+    print(f"状态: {period_comp['status']}")
+    print(f"周期: {period_comp['period']}")
+    print(f"本期: {period_comp['current_period_label']}")
+    print(f"上期: {period_comp['previous_period_label']}")
+    print(f"对比项数量: {len(period_comp['comparisons'])}")
+    print(f"  总数对比: {period_comp['comparisons']['total']['change']['arrow']} "
+          f"{period_comp['comparisons']['total']['change']['percent']}%")
+    print(f"  均值对比: {period_comp['comparisons']['average']['change']['arrow']} "
+          f"{period_comp['comparisons']['average']['change']['percent']}%")
+    print(f"本期记录数: {period_comp['details']['current_count']}")
+    print(f"上期记录数: {period_comp['details']['previous_count']}")
+
+    assert period_comp['status'] == 'success'
+    assert 'total' in period_comp['comparisons']
+    assert 'average' in period_comp['comparisons']
+    assert 'current_period_label' in period_comp
+    assert 'previous_period_label' in period_comp
+    assert 'details' in period_comp
+    print("✓ 周期综合对比测试通过\n")
+
+
+def test_all_comparisons():
+    print("=" * 60)
+    print("测试16: 全部对比指标汇总")
+    print("=" * 60)
+
+    df = generate_sample_sales(days=730)
+    calc = MetricsCalculator(df)
+
+    result = calc.get_all_comparisons(period='quarter')
+    print(f"状态: {result['status']}")
+    print(f"周期: {result['period']}")
+    print(f"对比项: {list(result['comparisons'].keys())}")
+
+    for key, comp in result['comparisons'].items():
+        if isinstance(comp, dict) and 'change' in comp:
+            arrow = comp['change'].get('arrow', '-')
+            pct = comp['change'].get('percent', '-')
+            print(f"  {key}: {arrow} {pct}%")
+
+    assert result['status'] == 'success'
+    assert 'total' in result['comparisons']
+    assert 'average' in result['comparisons']
+    assert 'period' in result['comparisons']
+    print("✓ 全部对比指标汇总测试通过\n")
+
+
+def test_comparison_missing_data():
+    print("=" * 60)
+    print("测试17: 指标对比 - 数据缺失场景")
+    print("=" * 60)
+
+    dates = pd.date_range(start='2025-06-01', end='2025-06-30', freq='D')
+    df = pd.DataFrame({'date': dates.strftime('%Y-%m-%d'), 'value': [100.0] * 30})
+    calc = MetricsCalculator(df)
+
+    comp = calc.get_comparison('total', period='month')
+    print(f"状态: {comp['status']}")
+    print(f"描述: {comp['description']}")
+    print(f"变化方向: {comp['change']['direction']}")
+
+    assert comp['status'] == 'empty'
+    assert comp['current']['value'] is not None or comp['change']['direction'] is None
+    assert comp['change']['direction'] is None
+    assert comp['change']['percent'] is None
+    print("✓ 对比数据缺失测试通过\n")
+
+
 def run_all_tests():
     print("\n" + "╔" + "═" * 58 + "╗")
     print("║" + " " * 15 + "指标计算模块单元测试" + " " * 22 + "║")
@@ -261,6 +417,12 @@ def run_all_tests():
         test_yoy_gap_in_data()
         test_growth_rate_missing_prev()
         test_trend_has_data_flag()
+        test_comparison_total()
+        test_comparison_average()
+        test_comparison_directions()
+        test_period_comparison()
+        test_all_comparisons()
+        test_comparison_missing_data()
 
         print("=" * 60)
         print("🎉 所有测试全部通过！")
